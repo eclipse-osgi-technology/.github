@@ -10,7 +10,7 @@ jobs:
   call-license-check:
     permissions:
       pull-requests: write
-    uses: eclipse-dash/dash-licenses/.github/workflows/mavenLicenseCheck.yml@90ebdf14dff066293b65b9d3ca99c8fb90d5222b # 1.1.0
+    uses: eclipse-dash/dash-licenses/.github/workflows/mavenLicenseCheck.yml@6469715c4d41a29a84f9f0f7cec81d9efc02119c # Not a release, as dash won't version their action
     with:
       projectId: technology.osgi-technology
     secrets:
