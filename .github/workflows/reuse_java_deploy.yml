@@ -20,15 +20,15 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
-          server-id: ossrh
+          server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           gpg-passphrase: PASSPHRASE
       - name: deploy
         run: mvn -Pdeploy --no-transfer-progress --batch-mode clean deploy
         env:
-          MAVEN_USERNAME: ${{ secrets.ORG_OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.ORG_OSSRH_PASSWORD }}
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
           PASSPHRASE: ${{ secrets.ORG_GPG_PASSPHRASE }}
 
       # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
