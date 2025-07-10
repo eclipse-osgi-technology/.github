@@ -29,7 +29,7 @@ jobs:
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
-          PASSPHRASE: ${{ secrets.ORG_GPG_PASSPHRASE }}
+          PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
       - name: Update dependency graph
