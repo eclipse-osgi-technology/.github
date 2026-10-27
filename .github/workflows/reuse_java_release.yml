@@ -1,0 +1,68 @@
+name: Release Maven
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: ${{ startsWith(github.repository, 'eclipse-osgi-technology/') && (github.event_name == 'release') }}
+    name: Release ${{ github.event.release.tag_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: install-secret-key
+        name: Install gpg secret key
+        run: |
+          cat <(echo -e "${{ secrets.GPG_PRIVATE_KEY }}") | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Java for publishing to Maven Central
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+          server-id: central
+          server-username-env-var: MAVEN_USERNAME
+          server-password-env-var: MAVEN_PASSWORD
+          gpg-passphrase-env-var: PASSPHRASE
+          # Maven 3.10 offers the credentials of a server only to the origins
+          # bound to its id, and the id central is bound to
+          # repo.maven.apache.org: the token has to reach central.sonatype.com
+          mvn-server-repository-origins: |
+            central:https://central.sonatype.com
+      - name: Validate release version against tag
+        id: version
+        run: |
+          # The tag is the release version, e.g. 1.4.0 or 1.4.0.RC1
+          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9A-Za-z_-]+)?$ ]] || [[ "${TAG}" == *SNAPSHOT* ]]; then
+            echo "::error::Release tag '${TAG}' must be a release version like 1.4.0 or 1.4.0.RC1"
+            exit 1
+          fi
+          # The tagged commit must be on the way to this release, e.g. 1.4.0-SNAPSHOT for 1.4.0
+          SNAPSHOT=$(mvn -B -q help:evaluate -Dexpression=revision -DforceStdout)
+          BASE="${SNAPSHOT%-SNAPSHOT}"
+          echo "Release version: ${TAG}, version in .mvn/maven.config: ${SNAPSHOT}"
+          if [[ "${TAG}" != "${BASE}" && "${TAG}" != "${BASE}".* ]]; then
+            echo "::error::Release tag '${TAG}' does not match ${SNAPSHOT} in .mvn/maven.config of the tagged commit"
+            exit 1
+          fi
+          # Every module gets the version from -Drevision
+          VERSIONS=$(mvn -B --no-transfer-progress -Drevision="${TAG}" validate \
+            | sed -n -E 's/^\[INFO\] Building .* ([^ ]+) +\[[0-9]+\/[0-9]+\]$/\1/p' | sort -u | tr '\n' ' ')
+          if [[ "${VERSIONS}" != "${TAG} " ]]; then
+            echo "::error::The modules have the versions ${VERSIONS}instead of ${TAG}: they need <version>\${revision}</version>"
+            exit 1
+          fi
+          echo "version=${TAG}" >> "${GITHUB_OUTPUT}"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+      - name: deploy
+        run: mvn -Pdeploy --no-transfer-progress --batch-mode -Drevision="${VERSION}" clean deploy
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
+          PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
