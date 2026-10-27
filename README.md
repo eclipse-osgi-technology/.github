@@ -17,7 +17,8 @@ and `release.yml` and nothing else.
 The version lives only in `.mvn/maven.config`, e.g. `-Drevision=1.4.0-SNAPSHOT`,
 and the POMs use `${revision}`. To release 1.4.0, set `-Drevision=1.4.0`, push
 the tag `1.4.0` (or publish a GitHub release with the new tag `1.4.0`), and then
-move to `-Drevision=1.5.0-SNAPSHOT`.
+move to `-Drevision=1.5.0-SNAPSHOT`. Only the tag deploys the release: the build
+of `main` deploys nothing while the version has no `-SNAPSHOT`.
 
 ### `.github/workflows/build.yml`
 
