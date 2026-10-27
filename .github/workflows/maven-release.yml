@@ -1,0 +1,67 @@
+# Central reusable release workflow for the Maven repos of
+# eclipse-osgi-technology, called from each repo's release.yml stub when a
+# tag is pushed (also by publishing a GitHub release with a new tag).
+# The tag must equal the version (-Drevision in .mvn/maven.config, or the
+# literal <version> of a pom without .mvn/maven.config) and must not be a
+# SNAPSHOT. Artifacts are built, signed and deployed to Maven Central.
+name: maven-release
+
+on:
+  workflow_call:
+    inputs:
+      jdk:
+        description: JDK used to build and deploy the release
+        type: string
+        default: '21'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # the key as the deploy workflows of this org import it
+      - name: Install gpg secret key
+        run: |
+          echo -e "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.jdk }}
+          cache: maven
+          # server id of the central-publishing-maven-plugin
+          server-id: central
+          server-username-env-var: CENTRAL_USERNAME
+          server-password-env-var: CENTRAL_PASSWORD
+          # Maven 3.10 offers the credentials of a server only to the origins
+          # bound to its id, and the id central is bound to
+          # repo.maven.apache.org: the token has to reach central.sonatype.com
+          mvn-server-repository-origins: |
+            central:https://central.sonatype.com
+          gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
+
+      - name: Guard - tag must equal the version
+        run: |
+          rev=$(sed -n 's/^-Drevision=//p' .mvn/maven.config 2>/dev/null)
+          [ -n "$rev" ] || rev=$(mvn -B -q -ntp help:evaluate -Dexpression=project.version -DforceStdout)
+          tag='${{ github.ref_name }}'
+          echo "$rev" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::version '$rev' is not a plain x.y.z release version"; exit 1; }
+          [ "$tag" = "$rev" ] \
+            || { echo "::error::tag '$tag' does not match version '$rev'"; exit 1; }
+
+      - name: Build, test and deploy release
+        run: mvn -B -ntp -U -Pdeploy deploy
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

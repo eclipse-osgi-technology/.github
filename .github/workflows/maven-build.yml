@@ -1,0 +1,265 @@
+# Central reusable build workflow for the Maven repos of
+# eclipse-osgi-technology, called from each repo's build.yml stub.
+# Every action version of the build lives here, pinned by commit SHA and
+# kept current by Dependabot on this repo; the stubs carry no versions.
+# Each repo chooses its JDKs: every JDK of the jdks input builds and tests
+# the whole repo and must pass. bnd-next builds with the latest bnd snapshot
+# and the jdk-main JDK as a test of what comes next; its failure does not
+# fail the build.
+name: maven-build
+
+on:
+  workflow_call:
+    inputs:
+      deploy:
+        description: deploy SNAPSHOT to Sonatype Central snapshots
+        type: boolean
+        default: false
+      jdks:
+        description: JSON list of the JDKs that build and test the repo, e.g. '["8", "11", "17"]'
+        type: string
+        default: '["21"]'
+      jdk-main:
+        description: JDK of the javadoc check, the bnd-next variant and the deploy
+        type: string
+        default: '21'
+      bnd-next:
+        description: also build with the latest bnd snapshot (allowed to fail)
+        type: boolean
+        default: true
+      structure:
+        description: check the repo conventions (.mvn/maven.config)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Convention checks nothing else catches; mvn install validates the
+  # Maven model.
+  structure:
+    if: inputs.structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Version lives only in .mvn/maven.config
+        run: |
+          rev=$(sed -n 's/^-Drevision=//p' .mvn/maven.config 2>/dev/null)
+          [ -n "$rev" ] || { echo "::error file=.mvn/maven.config::no -Drevision= line"; exit 1; }
+          echo "$rev" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$' \
+            || { echo "::error file=.mvn/maven.config::revision '$rev' is not x.y.z or x.y.z-SNAPSHOT"; exit 1; }
+          poms=$(git grep -l '<revision>' -- '*pom.xml' || true)
+          [ -z "$poms" ] \
+            || { echo "::error::<revision> property in $poms — .mvn/maven.config is the single source"; exit 1; }
+
+  # one matrix entry per JDK of the jdks input, plus bnd-next
+  variants:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.variants.outputs.include }}
+    steps:
+      - name: Variants from the inputs
+        id: variants
+        run: |
+          include=$(jq -cn --argjson jdks "$JDKS" --arg main "$JDK_MAIN" --argjson next "$BND_NEXT" \
+            '[$jdks[] | tostring | {variant: "jdk\(.)", java: .}]
+             + (if $next then [{variant: "bnd-next", java: $main}] else [] end)')
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+        env:
+          JDKS: ${{ inputs.jdks }}
+          JDK_MAIN: ${{ inputs.jdk-main }}
+          BND_NEXT: ${{ inputs.bnd-next }}
+
+  build:
+    needs: variants
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # the test report is published as a check run
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.variants.outputs.include) }}
+    name: ${{ matrix.variant }}
+    # only the JDKs decide; bnd-next is a test of what comes next (a test
+    # run may hang with a next bnd, so it gets a time limit)
+    continue-on-error: ${{ matrix.variant == 'bnd-next' }}
+    timeout-minutes: ${{ matrix.variant == 'bnd-next' && 60 || 360 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      # builds and tests everything. bnd-next takes the latest bnd snapshot
+      # from the bnd snapshot repository (settings.xml of this job only) for
+      # bnd.version. -U forces snapshot updates: the cached ~/.m2 must not
+      # pin a stale snapshot
+      - name: Build, verify and test
+        run: |
+          mvn_args=()
+          if [ "${{ matrix.variant }}" = bnd-next ]; then
+            repo=https://bndtools.jfrog.io/bndtools/libs-snapshot
+            next=$(curl -fsSL "$repo/biz/aQute/bnd/bnd-maven-plugin/maven-metadata.xml" \
+              | sed -n 's:.*<latest>\(.*\)</latest>.*:\1:p')
+            [ -n "$next" ] || { echo "::error::no bnd snapshot found in $repo"; exit 1; }
+            echo "bnd-next: bnd $next"
+            cat > "$RUNNER_TEMP/bnd-snapshots.xml" <<SETTINGS
+          <settings>
+            <profiles>
+              <profile>
+                <id>bnd-snapshots</id>
+                <repositories>
+                  <repository>
+                    <id>bnd-snapshots</id>
+                    <url>$repo/</url>
+                    <releases><enabled>false</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>bnd-snapshots</id>
+                    <url>$repo/</url>
+                    <releases><enabled>false</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+            <activeProfiles>
+              <activeProfile>bnd-snapshots</activeProfile>
+            </activeProfiles>
+          </settings>
+          SETTINGS
+            mvn_args=(-s "$RUNNER_TEMP/bnd-snapshots.xml" "-Dbnd.version=$next")
+          fi
+          mvn -B -ntp -U "${mvn_args[@]}" install
+
+      # renders the JUnit XML of the surefire, failsafe and bnd test runs as
+      # a check run with annotations and a job summary
+      - name: Test report
+        if: always()
+        uses: mikepenz/action-junit-report@6ef3fdcfcd5f0b5d14df3e659ef19b8c6820f93d # v6.6.1
+        with:
+          # one glob: every line of report_paths becomes its own report
+          report_paths: '**/target/*-reports/**/TEST-*.xml'
+          check_name: Test results (${{ matrix.variant }})
+          require_tests: false
+          detailed_summary: true
+          group_suite: true
+          include_time_in_summary: true
+
+      # the bnd baseline reports (API comparison against the last release
+      # on Maven Central) — readable in the job summary, downloadable as
+      # an artifact
+      - name: Baseline report to job summary
+        if: always()
+        run: |
+          shopt -s globstar nullglob
+          files=(**/target/baseline/*.txt)
+          [ ${#files[@]} -eq 0 ] && exit 0
+          {
+            echo "### bnd baseline — ${{ matrix.variant }}"
+            for f in "${files[@]}"; do
+              echo "<details><summary>${f}</summary>"
+              echo
+              echo '```'
+              cat "$f"
+              echo '```'
+              echo "</details>"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload baseline reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: baseline-${{ matrix.variant }}
+          path: '**/target/baseline/*.txt'
+          if-no-files-found: ignore
+
+      - name: Upload jars
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-${{ matrix.variant }}
+          path: '**/target/*.jar'
+          if-no-files-found: warn
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports-${{ matrix.variant }}
+          path: '**/target/*-reports/**/TEST-*.xml'
+          if-no-files-found: ignore
+
+  # own check outside the matrix: a PR already fails on javadoc errors
+  # instead of the deploy job after the merge. -P? keeps repos without a
+  # javadoc-check profile working
+  javadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.jdk-main }}
+          cache: maven
+
+      - name: Build javadoc jars
+        run: >-
+          mvn -B -ntp -U -DskipTests -P?javadoc-check package
+
+  deploy:
+    needs: [build, javadoc]
+    if: >-
+      inputs.deploy && github.ref == 'refs/heads/main' &&
+      needs.build.result == 'success' && needs.javadoc.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.jdk-main }}
+          cache: maven
+          # server id of the central-publishing-maven-plugin
+          server-id: central
+          server-username-env-var: CENTRAL_USERNAME
+          server-password-env-var: CENTRAL_PASSWORD
+          # Maven 3.10 offers the credentials of a server only to the origins
+          # bound to its id, and the id central is bound to
+          # repo.maven.apache.org: the token has to reach central.sonatype.com
+          mvn-server-repository-origins: |
+            central:https://central.sonatype.com
+
+      # releases go through maven-release.yml (tag push) instead
+      - name: Guard - only SNAPSHOT versions are auto-deployed
+        run: |
+          v=$(sed -n 's/^-Drevision=//p' .mvn/maven.config 2>/dev/null)
+          [ -n "$v" ] || v=$(mvn -B -q -ntp help:evaluate -Dexpression=project.version -DforceStdout)
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$' \
+            || { echo "::error::version '$v' is not a -SNAPSHOT — refusing deploy"; exit 1; }
+
+      - name: Deploy SNAPSHOT
+        run: mvn -B -ntp -U -Pdeploy -Dgpg.skip=true -DskipTests deploy
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
