@@ -8,6 +8,11 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      # init, analyze and upload-sarif must always have the same version
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Maintain dependencies for maven
   - package-ecosystem: "maven"
