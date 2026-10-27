@@ -250,15 +250,22 @@ jobs:
           mvn-server-repository-origins: |
             central:https://central.sonatype.com
 
-      # releases go through maven-release.yml (tag push) instead
+      # releases go through maven-release.yml (tag push) instead: the release
+      # commit on main, with a version without -SNAPSHOT, deploys nothing here
       - name: Guard - only SNAPSHOT versions are auto-deployed
+        id: guard
         run: |
           v=$(sed -n 's/^-Drevision=//p' .mvn/maven.config 2>/dev/null)
           [ -n "$v" ] || v=$(mvn -B -q -ntp help:evaluate -Dexpression=project.version -DforceStdout)
-          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$' \
-            || { echo "::error::version '$v' is not a -SNAPSHOT — refusing deploy"; exit 1; }
+          if echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$'; then
+            echo "snapshot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::version '$v' is not a -SNAPSHOT — not deployed, a release is deployed from its tag"
+            echo "snapshot=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Deploy SNAPSHOT
+        if: steps.guard.outputs.snapshot == 'true'
         run: mvn -B -ntp -U -Pdeploy -Dgpg.skip=true -DskipTests deploy
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
