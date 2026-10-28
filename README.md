@@ -7,12 +7,20 @@ The CI logic and every action version live in the reusable workflows of this
 repo. A repo only carries the stubs below; it chooses its JDKs in `build.yml`
 and `release.yml` and nothing else.
 
+The stubs that are the same in every repo (`codeql.yml`,
+`scorecard-analysis.yml` and `stale.yml`) are rolled out and kept identical by
+the otterdog blueprints in
+[.eclipsefdn](https://github.com/eclipse-osgi-technology/.eclipsefdn/tree/main/otterdog/blueprints):
+a repo gets them by being listed there, and otterdog opens a pull request when a
+stub is missing or differs.
+
 | Workflow | Does |
 |---|---|
 | `maven-build.yml` | builds and tests with every JDK of `jdks`, plus bnd-next (allowed to fail), checks the javadoc, and deploys a `-SNAPSHOT` from `main` |
 | `maven-release.yml` | deploys a release when a tag equal to the version is pushed |
-| `codeql.yml` | CodeQL analysis without a build |
+| `codeql.yml` | CodeQL analysis of the Java code and the workflows, without a build |
 | `scorecard.yml` | OSSF Scorecard analysis |
+| `stale.yml` | marks issues and pull requests stale after a year without activity and closes them three weeks later |
 
 The version lives only in `.mvn/maven.config`, e.g. `-Drevision=1.4.0-SNAPSHOT`,
 and the POMs use `${revision}`. To release 1.4.0, set `-Drevision=1.4.0`, push
@@ -63,44 +71,4 @@ jobs:
     secrets: inherit
     with:
       jdk: '21'
-```
-
-### `.github/workflows/codeql.yml`
-
-```yaml
-name: CodeQL
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    - cron: '17 4 * * 3'
-permissions:
-  contents: read
-jobs:
-  analyze:
-    permissions:
-      contents: read
-      security-events: write
-    uses: eclipse-osgi-technology/.github/.github/workflows/codeql.yml@main
-```
-
-### `.github/workflows/scorecard-analysis.yml`
-
-```yaml
-name: Scorecard analysis
-on:
-  branch_protection_rule:
-  schedule:
-    - cron: '43 5 * * 2'
-  push:
-    branches: [ main ]
-permissions: read-all
-jobs:
-  analysis:
-    permissions:
-      security-events: write
-      id-token: write
-    uses: eclipse-osgi-technology/.github/.github/workflows/scorecard.yml@main
 ```
