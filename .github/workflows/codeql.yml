@@ -1,5 +1,7 @@
 # Central reusable CodeQL workflow for the Java repos of
-# eclipse-osgi-technology, called from each repo's codeql.yml stub.
+# eclipse-osgi-technology, called from each repo's codeql.yml stub. It
+# analyzes the Java code and the GitHub workflows of the repo, as the
+# default setup it replaces did.
 # build-mode none needs no working Maven build. The action versions live
 # only here, pinned by commit SHA and kept current by Dependabot on this
 # repo (one grouped PR, so init and analyze never drift apart).
@@ -17,6 +19,10 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ java, actions ]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,10 +32,10 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          languages: java
+          languages: ${{ matrix.language }}
           build-mode: none
 
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          category: "/language:java"
+          category: "/language:${{ matrix.language }}"
