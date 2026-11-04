@@ -1,44 +1,17 @@
-# Central reusable stale workflow for the repos of eclipse-osgi-technology,
-# called from each repo's stale.yml stub. An issue or pull request is marked
-# stale after a year without activity and closed three weeks later; one with
-# a milestone is left alone.
-# No top-level permissions: a called workflow may not request more than the
-# caller's job grants, and the stub grants exactly the two scopes below. The
-# token is the caller's GITHUB_TOKEN, no secret is needed.
-name: stale
-
+# Managed by the otterdog blueprint
+# https://github.com/eclipse-osgi-technology/.eclipsefdn/blob/main/otterdog/blueprints/stale.yml
+# change it there; the logic lives in eclipse-osgi-technology/.github.
+name: Stale
 on:
-  workflow_call:
-
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   stale:
-    runs-on: ubuntu-latest
+    # a called workflow gets at most what this job grants
     permissions:
       issues: write
       pull-requests: write
-    steps:
-      - name: Mark and close stale issues and pull requests
-        uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
-        with:
-          days-before-stale: 365
-          days-before-close: 21
-          exempt-all-milestones: true
-          stale-issue-label: stale
-          stale-issue-message: >
-            This issue has been automatically marked as stale because it has
-            not had recent activity. Given the limited bandwidth of the team,
-            it will be closed if no further activity occurs.
-          close-issue-message: >
-            This issue has been automatically closed due to inactivity. Please
-            feel free to reopen it with steps to reproduce, a quick explanation
-            of your use case or a pull request.
-          stale-pr-label: stale
-          stale-pr-message: >
-            This pull request has been automatically marked as stale because it
-            has not had recent activity. Given the limited bandwidth of the
-            team, it will be closed if no further activity occurs.
-          close-pr-message: >
-            This pull request has been automatically closed due to inactivity.
-            If you are still interested in contributing this, please rebase it
-            on the latest default branch, address the review comments and make
-            sure the build passes.
+    uses: eclipse-osgi-technology/.github/.github/workflows/stale.yml@main
