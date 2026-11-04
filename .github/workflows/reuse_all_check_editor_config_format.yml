@@ -21,12 +21,12 @@ jobs:
 
     steps:
     - name: Checkout PR head branch
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
     - name: Editor Config Validation against PR base commit
-      uses: super-linter/super-linter/slim@12150456a73e248bdc94d0794898f94e23127c88 # v7.4.0
+      uses: super-linter/super-linter/slim@2da136927bd4a73596db63044b504547c62cb854 # v9.0.0
       env:
         VALIDATE_ALL_CODEBASE: false
         VALIDATE_EDITORCONFIG: true

@@ -4,6 +4,10 @@
 # The tag must equal the version (-Drevision in .mvn/maven.config, or the
 # literal <version> of a pom without .mvn/maven.config) and must not be a
 # SNAPSHOT. Artifacts are built, signed and deployed to Maven Central.
+# The provenance job attests the staged files with SLSA build provenance
+# (GitHub artifact attestation, SLSA Build L3 as it runs in this reusable
+# workflow) and attaches it to the GitHub release of the tag; the calling
+# stub grants it contents: write, id-token: write and attestations: write.
 name: maven-release
 
 on:
@@ -20,6 +24,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +43,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ inputs.jdk }}
-          cache: maven
+          # no cache: a release must not read what other runs wrote (SLSA Build L3)
           # server id of the central-publishing-maven-plugin
           server-id: central
           server-username-env-var: CENTRAL_USERNAME
@@ -65,3 +71,58 @@ jobs:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_SONATYPE_TOKEN_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_SONATYPE_TOKEN_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Subjects of the provenance: every file the central-publishing-maven-plugin
+      # staged for Maven Central (target/central-staging), without signatures,
+      # checksums and metadata. One "<sha256>  <file name>" line per file (sed
+      # drops the path), base64 encoded as a single-line job output.
+      - name: Hash the staged artifacts
+        id: hash
+        run: |
+          subjects="$RUNNER_TEMP/subjects"
+          find . -path '*/target/central-staging/*' -type f \
+            -not -name '*.asc' -not -name '*.md5' -not -name '*.sha1' \
+            -not -name '*.sha256' -not -name '*.sha512' -not -name 'maven-metadata*' \
+            -print0 | xargs -0 -r sha256sum | sed 's#  .*/#  #' | sort -k2 > "$subjects"
+          [ -s "$subjects" ] || { echo "::error::nothing staged in target/central-staging"; exit 1; }
+          cat "$subjects"
+          echo "hashes=$(base64 -w0 < "$subjects")" >> "$GITHUB_OUTPUT"
+
+  # A job of its own: no build step runs where the OIDC token can sign.
+  # Verify a jar with
+  #   gh attestation verify <jar> --repo <owner>/<repo>
+  #     --signer-workflow <owner>/.github/.github/workflows/<this file>
+  # or offline with --bundle <repo>-<tag>.intoto.jsonl of the release.
+  provenance:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # attaches the attestation to the release
+      id-token: write       # Sigstore certificate for this workflow
+      attestations: write   # stores the attestation in the repository
+    steps:
+      - name: Subjects
+        run: base64 -d <<< "$HASHES" > "$RUNNER_TEMP/subjects"
+        env:
+          HASHES: ${{ needs.release.outputs.hashes }}
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects
+
+      - name: Attach the attestation to the release
+        run: |
+          f="$RUNNER_TEMP/$REPO-$TAG.intoto.jsonl"
+          jq -c . "$BUNDLE" > "$f"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            echo "::notice::no GitHub release for $TAG: the attestation is only in the attestation store"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          REPO: ${{ github.event.repository.name }}
+          TAG: ${{ github.ref_name }}
