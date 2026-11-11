@@ -8,18 +8,40 @@ on:
 
 jobs:
   add-comment:
+    # bots like dependabot are no new contributors
+    if: github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
-    # the action comments on the issue or PR; the caller has to grant the same
+    # comments on the issue or PR; the caller has to grant the same
     permissions:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/first-interaction@v3
-        with:
-          repo_token: ${{ secrets.envGH }}
-          issue_message: 'Thanks for your contribution :fire: We will take a look asap :rocket:'
-          pr_message: >-
+      # actions/first-interaction@v3 welcomes everybody who never opened an
+      # issue, even if there are PRs of the user already
+      # (https://github.com/actions/first-interaction/issues/369), so the
+      # check is done here: the opened issue or PR must be the only one of
+      # the user in the repository
+      - name: Welcome first time contributors
+        env:
+          GH_TOKEN: ${{ secrets.envGH }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          AUTHOR: ${{ github.event.sender.login }}
+          IS_PR: ${{ github.event_name == 'pull_request_target' || github.event_name == 'pull_request' }}
+          ISSUE_MESSAGE: 'Thanks for your contribution :fire: We will take a look asap :rocket:'
+          PR_MESSAGE: >-
             We are always happy to welcome new contributors :heart: To make things easier for everyone, please
             make sure to follow our [contribution guidelines](https://github.com/eclipse-osgi-technology/.github/blob/main/CODE_OF_CONDUCT.md),
             check if you have already signed the [ECA](http://www.eclipse.org/legal/ecafaq.php), and
             relate this pull request to an existing issue or discussion.
+        run: |
+          count=$(gh api -X GET search/issues -f q="repo:$REPO author:$AUTHOR" --jq .total_count)
+          if [ "$count" -gt 1 ]; then
+            echo "$AUTHOR has $count issues and pull requests in $REPO, not a first contribution"
+            exit 0
+          fi
+          if [ "$IS_PR" = true ]; then
+            gh pr comment "$NUMBER" --repo "$REPO" --body "$PR_MESSAGE"
+          else
+            gh issue comment "$NUMBER" --repo "$REPO" --body "$ISSUE_MESSAGE"
+          fi
