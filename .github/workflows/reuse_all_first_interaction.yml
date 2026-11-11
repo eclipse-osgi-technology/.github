@@ -9,6 +9,10 @@ on:
 jobs:
   add-comment:
     runs-on: ubuntu-latest
+    # the action comments on the issue or PR; the caller has to grant the same
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - uses: actions/first-interaction@v3
         with:
