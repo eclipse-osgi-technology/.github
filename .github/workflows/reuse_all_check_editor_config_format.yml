@@ -33,3 +33,8 @@ jobs:
         DEFAULT_BRANCH: ${{ github.event.pull_request.base.sha }}
         GITHUB_TOKEN: ${{ secrets.envGH }}
         VALIDATE_MARKDOWN: true
+        # Fork PRs only get a read-only token, so report through the job summary instead of the API
+        MULTI_STATUS: false
+        ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
+        SAVE_SUPER_LINTER_SUMMARY: true
+        ENABLE_GITHUB_ACTIONS_STEP_SUMMARY: true
